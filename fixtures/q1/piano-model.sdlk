@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "0.1.0-q1",
+  "id": "q1-piano-model",
+  "metadata": {"title": "Piano model neutrality check", "composer": "Sandikala fixture"},
+  "parts": [{"id": "part-piano", "name": "Piano", "instrumentRef": {"id": "sandikala.demo.piano", "version": "1"}, "voiceIds": ["voice-piano"]}],
+  "voices": [{"id": "voice-piano", "partId": "part-piano", "timeDomainId": "metric-main"}],
+  "timeDomains": [{"id": "metric-main", "kind": "metric", "unit": "quarter", "length": {"numerator": 4, "denominator": 1}}],
+  "pitchSystems": [{"id": "piano-tuning", "kind": "equalTemperament", "stepsPerOctave": 12, "reference": {"letter": "A", "octave": 4, "frequencyHz": 440}}],
+  "events": [{"id": "piano-note-1", "voiceId": "voice-piano", "anchor": {"domainId": "metric-main", "position": {"numerator": 0, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "spelled", "contextId": "piano-tuning", "letter": "C", "alteration": 0, "octave": 4}}, "extensions": {}}],
+  "relations": [],
+  "notationViews": [{"id": "view-staff", "providerId": "sandikala.western.v1", "partIds": ["part-piano"], "settings": {}}],
+  "extensions": {}
+}

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "0.1.0-q1",
+  "id": "q1-gamelan-basic",
+  "metadata": {"title": "Numerical Study", "composer": "Sandikala fixture"},
+  "parts": [{"id": "part-saron", "name": "Saron (demo)", "instrumentRef": {"id": "sandikala.demo.saron", "version": "1"}, "voiceIds": ["voice-saron"]}],
+  "voices": [{"id": "voice-saron", "partId": "part-saron", "timeDomainId": "cycle-main"}],
+  "timeDomains": [{"id": "cycle-main", "kind": "cycle", "unit": "pulse", "cycleLength": 16, "cycleCount": 1}],
+  "pitchSystems": [{"id": "ensemble-demo", "kind": "degree", "degrees": ["1", "2", "3", "4", "5", "6", "7"], "tuningHz": {"1": 220, "2": 247, "3": 270, "4": 300, "5": 330, "6": 360, "7": 400}}],
+  "events": [
+    {"id": "event-01", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 0, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "1", "register": 1}}, "extensions": {}},
+    {"id": "event-02", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 1, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "2", "register": 0}}, "extensions": {}},
+    {"id": "event-03", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 2, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "3", "register": 0}}, "extensions": {}},
+    {"id": "event-04", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 3, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "5", "register": 0}}, "extensions": {}},
+    {"id": "event-05", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 4, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "6", "register": -1}}, "extensions": {}},
+    {"id": "event-06", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 5, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "rest", "payload": {}, "extensions": {}},
+    {"id": "event-07", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 6, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "5", "register": 0}}, "extensions": {}},
+    {"id": "event-08", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 7, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "3", "register": 0}}, "extensions": {}},
+    {"id": "event-09", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 8, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "2", "register": 0}}, "extensions": {}},
+    {"id": "event-10", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 9, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "1", "register": 0}}, "extensions": {}},
+    {"id": "event-11", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 10, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "2", "register": 0}}, "extensions": {}},
+    {"id": "event-12", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 11, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "3", "register": 0}}, "extensions": {}},
+    {"id": "event-13", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 12, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "5", "register": 0}}, "extensions": {}},
+    {"id": "event-14", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 13, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "6", "register": 0}}, "extensions": {}},
+    {"id": "event-15", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 14, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "5", "register": 0}}, "extensions": {}},
+    {"id": "event-16", "voiceId": "voice-saron", "anchor": {"domainId": "cycle-main", "position": {"numerator": 15, "denominator": 1}}, "extent": {"numerator": 1, "denominator": 1}, "kind": "sound", "payload": {"pitch": {"kind": "degree", "contextId": "ensemble-demo", "degree": "1", "register": 0}}, "extensions": {}}
+  ],
+  "relations": [],
+  "notationViews": [{"id": "view-numeric", "providerId": "sandikala.numeric-demo.v1", "partIds": ["part-saron"], "settings": {}}],
+  "extensions": {}
+}
