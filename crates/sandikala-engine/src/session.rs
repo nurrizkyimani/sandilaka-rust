@@ -53,6 +53,37 @@ pub enum CellValue {
     rename_all_fields = "camelCase"
 )]
 pub enum SessionCommand {
+    SetPartMix {
+        part_id: String,
+        gain: u32,
+        pan: i32,
+        mute: bool,
+        solo: bool,
+    },
+    AnnotateEvent {
+        event_id: String,
+        text: String,
+        velocity: u8,
+    },
+    StudioEvent {
+        voice_id: String,
+        position: Rational,
+        extent: Rational,
+        pitch: Option<Pitch>,
+    },
+    StudioClear {
+        voice_id: String,
+        position: Rational,
+    },
+    AddInstrument {
+        instrument_id: String,
+    },
+    RemovePart {
+        part_id: String,
+    },
+    ConfigureScore {
+        settings: crate::studio::ScoreSettings,
+    },
     SetCell {
         voice_id: String,
         pulse_index: u32,
@@ -158,6 +189,9 @@ impl Default for DocumentSession {
 }
 
 impl DocumentSession {
+    pub fn new_studio() -> Self {
+        Self::from_valid_document(crate::studio::new_score(), None)
+    }
     /// Create a clean session containing the empty 16-pulse demo document.
     pub fn new() -> Self {
         let document = empty_demo_document();
@@ -207,7 +241,11 @@ impl DocumentSession {
         discard_unsaved: bool,
     ) -> Result<SessionProjection, SessionError> {
         self.ensure_discard_allowed(discard_unsaved)?;
-        *self = Self::new();
+        *self = if self.document.notation_views[0].provider_id == crate::studio::PROVIDER {
+            Self::new_studio()
+        } else {
+            Self::new()
+        };
         Ok(self.projection())
     }
 
@@ -296,9 +334,127 @@ impl DocumentSession {
                     .unwrap_or_else(|| "unsupported view".to_owned()),
             ));
         }
-
         let mut after = self.document.clone();
+        let studio = after.notation_views[0].provider_id == crate::studio::PROVIDER;
+        if !studio
+            && matches!(
+                command,
+                SessionCommand::StudioEvent { .. }
+                    | SessionCommand::StudioClear { .. }
+                    | SessionCommand::AddInstrument { .. }
+                    | SessionCommand::RemovePart { .. }
+                    | SessionCommand::ConfigureScore { .. }
+            )
+        {
+            return Err(SessionError::InvalidCommand(
+                "This command requires a studio score".into(),
+            ));
+        }
         match command {
+            SessionCommand::SetPartMix {
+                part_id,
+                gain,
+                pan,
+                mute,
+                solo,
+            } => {
+                if !studio {
+                    return Err(SessionError::InvalidCommand(
+                        "Mixer requires a studio score".into(),
+                    ));
+                }
+                let mut mix = crate::studio::mixer(&after).map_err(SessionError::InvalidCommand)?;
+                mix.insert(
+                    part_id,
+                    crate::studio::PartMix {
+                        gain,
+                        pan,
+                        mute,
+                        solo,
+                    },
+                );
+                after.extensions.insert(
+                    crate::studio::MIXER.into(),
+                    serde_json::to_value(mix)
+                        .map_err(|e| SessionError::InvalidCommand(e.to_string()))?,
+                );
+            }
+            SessionCommand::AnnotateEvent {
+                event_id,
+                text,
+                velocity,
+            } => {
+                if !studio {
+                    return Err(SessionError::InvalidCommand(
+                        "Event marks require a studio score".into(),
+                    ));
+                }
+                let event = after
+                    .events
+                    .iter_mut()
+                    .find(|e| e.id() == event_id)
+                    .ok_or_else(|| {
+                        SessionError::InvalidCommand("Select an existing event".into())
+                    })?;
+                let extensions = match event {
+                    Event::Rest { extensions, .. } | Event::Sound { extensions, .. } => extensions,
+                };
+                extensions.insert(
+                    crate::studio::MARKS.into(),
+                    serde_json::json!({"text":text,"velocity":velocity}),
+                );
+            }
+            SessionCommand::StudioEvent {
+                voice_id,
+                position,
+                extent,
+                pitch,
+            } => crate::studio::set_event(&mut after, &voice_id, position, extent, pitch)
+                .map_err(SessionError::InvalidCommand)?,
+            SessionCommand::StudioClear { voice_id, position } => {
+                if !after.voices.iter().any(|v| v.id == voice_id) {
+                    return Err(SessionError::InvalidCommand("Unknown staff".into()));
+                }
+                after
+                    .events
+                    .retain(|e| !(e.voice_id() == voice_id && e.anchor().position == position));
+            }
+            SessionCommand::AddInstrument { instrument_id } => {
+                crate::studio::add_instrument(&mut after, &instrument_id)
+                    .map_err(SessionError::InvalidCommand)?
+            }
+            SessionCommand::RemovePart { part_id } => {
+                if after.parts.len() == 1 || !after.parts.iter().any(|p| p.id == part_id) {
+                    return Err(SessionError::InvalidCommand(
+                        "Keep at least one existing part".into(),
+                    ));
+                }
+                let voices: Vec<_> = after
+                    .voices
+                    .iter()
+                    .filter(|v| v.part_id == part_id)
+                    .map(|v| v.id.clone())
+                    .collect();
+                after.parts.retain(|p| p.id != part_id);
+                if let Some(mix) = after
+                    .extensions
+                    .get_mut(crate::studio::MIXER)
+                    .and_then(|v| v.as_object_mut())
+                {
+                    mix.remove(&part_id);
+                }
+                after.voices.retain(|v| v.part_id != part_id);
+                after
+                    .events
+                    .retain(|e| !voices.iter().any(|v| v == e.voice_id()));
+                for view in &mut after.notation_views {
+                    view.part_ids.retain(|p| p != &part_id);
+                }
+            }
+            SessionCommand::ConfigureScore { settings } => {
+                crate::studio::configure(&mut after, settings)
+                    .map_err(SessionError::InvalidCommand)?
+            }
             SessionCommand::SetCell {
                 voice_id,
                 pulse_index,
@@ -325,6 +481,9 @@ impl DocumentSession {
         }
 
         after.validate()?;
+        if studio && let Some(reason) = crate::studio::unsupported_reason(&after) {
+            return Err(SessionError::InvalidCommand(reason));
+        }
         if after == self.document {
             return Ok(());
         }
@@ -458,7 +617,15 @@ fn empty_demo_document() -> ScoreDocument {
 }
 
 fn capabilities_for(document: &ScoreDocument) -> SessionCapabilities {
-    let reason = numeric_view_unsupported_reason(document);
+    let reason = if document
+        .notation_views
+        .first()
+        .is_some_and(|v| v.provider_id == crate::studio::PROVIDER)
+    {
+        crate::studio::unsupported_reason(document)
+    } else {
+        numeric_view_unsupported_reason(document)
+    };
     SessionCapabilities {
         can_edit: reason.is_none(),
         can_render: reason.is_none(),

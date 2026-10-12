@@ -24,9 +24,12 @@ pub struct CellGeometry {
     pub height: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LayoutResult {
+    Pages {
+        layout: crate::studio::PageLayout,
+    },
     Svg {
         provider_id: String,
         width: u32,
@@ -43,6 +46,7 @@ pub enum LayoutResult {
 impl LayoutResult {
     pub fn tag(&self) -> &'static str {
         match self {
+            Self::Pages { .. } => "pages",
             Self::Svg { .. } => "svg",
             Self::UnsupportedView { .. } => "unsupportedView",
         }
@@ -60,6 +64,12 @@ pub fn layout_document(document: &ScoreDocument, view_id: &str) -> Result<Layout
     else {
         return Ok(unsupported(view_id, "notation view does not exist"));
     };
+    if view.provider_id == crate::studio::PROVIDER {
+        return Ok(match crate::studio::layout(document, None) {
+            Ok(layout) => LayoutResult::Pages { layout },
+            Err(reason) => unsupported(view_id, &reason),
+        });
+    }
     if view.provider_id != PROVIDER_ID {
         return Ok(unsupported(
             view_id,

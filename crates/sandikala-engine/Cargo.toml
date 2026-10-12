@@ -11,3 +11,7 @@ sandikala-io = { path = "../sandikala-io" }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+base64 = "=0.22.1"
+krilla = "=0.8.2"
+krilla-svg = "=0.8.1"
+usvg = "=0.47.0"
