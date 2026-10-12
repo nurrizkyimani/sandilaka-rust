@@ -1,0 +1,19 @@
+[package]
+name = "sandikala-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", features = [] }
+
+[dependencies]
+sandikala-core = { path = "../../../crates/sandikala-core" }
+sandikala-engine = { path = "../../../crates/sandikala-engine" }
+sandikala-io = { path = "../../../crates/sandikala-io" }
+tauri.workspace = true
+tauri-plugin-dialog.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
