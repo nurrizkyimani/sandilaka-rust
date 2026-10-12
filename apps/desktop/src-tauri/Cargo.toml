@@ -14,6 +14,8 @@ sandikala-engine = { path = "../../../crates/sandikala-engine" }
 sandikala-io = { path = "../../../crates/sandikala-io" }
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+cpal.workspace = true
+rustysynth.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

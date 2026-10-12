@@ -32,6 +32,38 @@ function deferred<T>() {
 }
 
 describe("DesktopBridge", () => {
+  it("plays the acknowledged score after queued edits and resolves a saved sound path", async () => {
+    const gate = deferred<void>();
+    let state = projection();
+    let playedRevision: unknown;
+    const call = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
+      if (command === "get_state") return state as T;
+      if (command === "find_saron_soundfont") {
+        expect(args?.preferredPath).toBe("/saved/saron.sf2");
+        return "/library/saron.sf2" as T;
+      }
+      if (command === "apply_command") {
+        await gate.promise;
+        state = projection(1);
+        return state as T;
+      }
+      if (command === "play_saron") {
+        playedRevision = args?.expectedRevision;
+        expect(args?.soundfontPath).toBe("/library/saron.sf2");
+        return undefined as T;
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    const bridge = new DesktopBridge(call);
+    await bridge.getState();
+    const path = await bridge.findSaronSoundFont("/saved/saron.sf2");
+    const edit = bridge.apply({ kind: "setMetadata", title: "Playback", composer: "" });
+    const play = bridge.playSaron(path!, 120);
+    expect(playedRevision).toBeUndefined();
+    gate.resolve(undefined);
+    await Promise.all([edit, play]);
+    expect(playedRevision).toBe(1);
+  });
   it("serializes edits against each acknowledged revision", async () => {
     const gate = deferred<void>();
     let state = projection();

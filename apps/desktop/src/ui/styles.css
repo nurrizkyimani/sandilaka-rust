@@ -127,6 +127,16 @@ button:disabled { color: #98a19e; background: #f3f5f4; cursor: not-allowed; }
 .segmented-control button:last-child { border-radius: 0 4px 4px 0; }
 .segmented-control button + button { border-left: 0; }
 .segmented-control button.is-active { position: relative; z-index: 1; color: #1c654a; background: #e3f0e9; border-color: #7eaa95; }
+.playback-section > button { width: 100%; margin-top: 8px; }
+.playback-section .soundfont-name { margin: 7px 0 10px; overflow: hidden; color: #53615c; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.score-cell.is-playing { background: rgb(45 134 215 / 18%); outline: 2px solid #2d86d7; outline-offset: -2px; }
+.playback-section .field-label { display: block; margin-top: 12px; }
+.tempo-input { display: flex; align-items: center; gap: 8px; }
+.tempo-input input { width: 88px; }
+.tempo-input span, .playback-note { color: #687570; font-size: 11px; }
+.playback-section .playback-start { color: #fff; background: #287453; border-color: #287453; }
+.playback-section .playback-stop { color: #8a321f; border-color: #d6a899; background: #fff0e9; }
+.playback-note { margin: 9px 0 0; line-height: 1.4; }
 .degree-pad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .degree-pad button { aspect-ratio: 1; min-width: 0; min-height: 38px; padding: 0; font-size: 15px; font-weight: 600; }
 .degree-pad .rest-key { color: #92492e; background: #fff4ed; }

@@ -9,6 +9,10 @@ use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
+mod saron_playback;
+mod score_audio;
+use saron_playback::SaronPlayer;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CommandError {
@@ -80,6 +84,7 @@ fn codec_error(error: CodecError) -> CommandError {
 }
 
 type SessionState = Mutex<DocumentSession>;
+type SaronPlaybackState = Mutex<SaronPlayer>;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -146,6 +151,118 @@ fn ensure_version(
 #[tauri::command]
 fn get_state(state: State<'_, SessionState>) -> Result<SessionProjection, CommandError> {
     Ok(lock_session(&state)?.projection())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn play_saron(
+    app: AppHandle,
+    state: State<'_, SessionState>,
+    session_id: String,
+    expected_revision: u32,
+    soundfont_path: String,
+    pulse_bpm: u32,
+) -> Result<(), CommandError> {
+    let document = {
+        let session = lock_session(&state)?;
+        let projection = session.projection();
+        ensure_version(&projection, &session_id, expected_revision)?;
+        projection.document
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<SaronPlaybackState>()
+            .lock()
+            .map_err(|_| CommandError::io("audio playback is unavailable"))?
+            .play(&document, PathBuf::from(soundfont_path), pulse_bpm)
+            .map_err(|message| CommandError::new("PlaybackError", message))
+    })
+    .await
+    .map_err(|error| CommandError::new("PlaybackError", error.to_string()))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn find_saron_soundfont(app: AppHandle, preferred_path: Option<String>) -> Option<String> {
+    use saron_playback::SARON_SOUNDFONT_NAME;
+    let mut candidates = Vec::new();
+    if let Some(path) = preferred_path {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = std::env::var_os("SANDIKALA_SARON_SF2") {
+        candidates.push(PathBuf::from(path));
+    }
+    for directory in [app.path().resource_dir(), app.path().app_data_dir()]
+        .into_iter()
+        .flatten()
+    {
+        candidates.push(directory.join("soundfont").join(SARON_SOUNDFONT_NAME));
+    }
+    // Development checkouts share the existing MuseScore sound library.
+    if let Some(dev_directory) = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(4)
+    {
+        candidates.push(
+            dev_directory
+                .join("MuseScore/soundfont")
+                .join(SARON_SOUNDFONT_NAME),
+        );
+    }
+    let resolved =
+        saron_playback::find_soundfont(candidates).map(|path| path.to_string_lossy().into_owned());
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "Saron sound asset: {}",
+        resolved.as_deref().unwrap_or("missing")
+    );
+    resolved
+}
+
+#[tauri::command]
+fn saron_playback_status(
+    playback: State<'_, SaronPlaybackState>,
+) -> Result<saron_playback::PlaybackStatus, CommandError> {
+    playback
+        .lock()
+        .map_err(|_| CommandError::io("audio playback is unavailable"))?
+        .status()
+        .map_err(|message| CommandError::new("PlaybackError", message))
+}
+
+#[tauri::command]
+fn stop_saron(playback: State<'_, SaronPlaybackState>) -> Result<(), CommandError> {
+    playback
+        .lock()
+        .map_err(|_| CommandError::io("audio playback is unavailable"))?
+        .stop()
+        .map_err(|message| CommandError::new("PlaybackError", message))
+}
+
+#[tauri::command]
+fn pause_playback(
+    playback: State<'_, SaronPlaybackState>,
+    paused: bool,
+) -> Result<(), CommandError> {
+    playback
+        .lock()
+        .map_err(|_| CommandError::io("Audio unavailable"))?
+        .pause(paused)
+        .map_err(|e| CommandError::new("PlaybackError", e))
+}
+#[tauri::command]
+fn seek_playback(playback: State<'_, SaronPlaybackState>, pulse: f64) -> Result<(), CommandError> {
+    playback
+        .lock()
+        .map_err(|_| CommandError::io("Audio unavailable"))?
+        .seek(pulse)
+        .map_err(|e| CommandError::new("PlaybackError", e))
+}
+
+#[tauri::command]
+fn saron_playback_active(playback: State<'_, SaronPlaybackState>) -> Result<bool, CommandError> {
+    playback
+        .lock()
+        .map_err(|_| CommandError::io("audio playback is unavailable"))?
+        .is_playing()
+        .map_err(|message| CommandError::new("PlaybackError", message))
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -362,6 +479,7 @@ async fn export_svg(
 ) -> Result<ExportResult, CommandError> {
     let tagged = current_layout(&state, &session_id, revision, &view_id)?;
     let svg = match tagged.layout {
+        LayoutResult::Pages { layout } => studio_svg(&layout),
         LayoutResult::Svg { svg, .. } => svg,
         LayoutResult::UnsupportedView { reason, .. } => {
             return Err(CommandError::new("UnsupportedView", reason));
@@ -389,14 +507,170 @@ async fn export_svg(
     })
 }
 
+fn studio_svg(layout: &sandikala_engine::studio::PageLayout) -> String {
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\"><style>{}</style>",
+        layout.width,
+        layout.height as usize * layout.pages.len(),
+        layout.font_css
+    );
+    for (index, page) in layout.pages.iter().enumerate() {
+        svg.push_str(&format!(
+            "<g transform=\"translate(0 {})\">{}</g>",
+            index * layout.height as usize,
+            page.svg
+        ));
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn get_studio_layout(
+    state: State<'_, SessionState>,
+    session_id: String,
+    revision: u32,
+    part_id: Option<String>,
+) -> Result<TaggedLayout, CommandError> {
+    let projection = lock_session(&state)?.projection();
+    ensure_version(&projection, &session_id, revision)?;
+    let layout = sandikala_engine::studio::layout(&projection.document, part_id.as_deref())
+        .map_err(|e| CommandError::new("UnsupportedView", e))?;
+    Ok(TaggedLayout {
+        session_id,
+        revision,
+        layout: LayoutResult::Pages { layout },
+    })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn export_score(
+    app: AppHandle,
+    state: State<'_, SessionState>,
+    session_id: String,
+    revision: u32,
+    part_id: Option<String>,
+    format: String,
+) -> Result<ExportResult, CommandError> {
+    let tagged = get_studio_layout(state.clone(), session_id.clone(), revision, part_id)?;
+    let LayoutResult::Pages { layout } = tagged.layout else {
+        return Err(CommandError::new(
+            "UnsupportedView",
+            "Score pages unavailable",
+        ));
+    };
+    let (contents, extension) = match format.as_str() {
+        "svg" => (studio_svg(&layout).into_bytes(), "svg"),
+        "html" => (
+            sandikala_engine::studio::printable_html(&layout).into_bytes(),
+            "html",
+        ),
+        "pdf" => (
+            sandikala_engine::publishing::pdf(&layout).map_err(CommandError::io)?,
+            "pdf",
+        ),
+        _ => {
+            return Err(CommandError::new(
+                "InvalidDocument",
+                "Choose SVG, PDF, or printable HTML",
+            ));
+        }
+    };
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("Score pages", &[extension])
+        .blocking_save_file()
+    else {
+        return Ok(ExportResult {
+            status: "cancelled",
+            path: None,
+        });
+    };
+    let path = path
+        .into_path()
+        .map_err(|e| CommandError::io(e.to_string()))?;
+    ensure_version(&lock_session(&state)?.projection(), &session_id, revision)?;
+    write_bytes_atomic(&path, &contents).map_err(codec_error)?;
+    Ok(ExportResult {
+        status: "exported",
+        path: Some(path.to_string_lossy().into_owned()),
+    })
+}
+
+#[tauri::command]
+fn print_score(window: tauri::WebviewWindow) -> Result<(), CommandError> {
+    window.print().map_err(|e| CommandError::io(e.to_string()))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn export_audio(
+    app: AppHandle,
+    state: State<'_, SessionState>,
+    session_id: String,
+    revision: u32,
+    soundfont_path: String,
+    pulse_bpm: u32,
+) -> Result<ExportResult, CommandError> {
+    let projection = lock_session(&state)?.projection();
+    ensure_version(&projection, &session_id, revision)?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let path = PathBuf::from(soundfont_path);
+        let samples = score_audio::render(
+            &projection.document,
+            path.parent().ok_or("Missing sound library")?,
+            pulse_bpm,
+            44_100,
+        )?;
+        score_audio::wav(&samples, 44_100)
+    })
+    .await
+    .map_err(|e| CommandError::io(e.to_string()))?
+    .map_err(|e| CommandError::new("PlaybackError", e))?;
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("Audio WAV", &["wav"])
+        .blocking_save_file()
+    else {
+        return Ok(ExportResult {
+            status: "cancelled",
+            path: None,
+        });
+    };
+    let path = path
+        .into_path()
+        .map_err(|e| CommandError::io(e.to_string()))?;
+    ensure_version(&lock_session(&state)?.projection(), &session_id, revision)?;
+    write_bytes_atomic(&path, &bytes).map_err(codec_error)?;
+    Ok(ExportResult {
+        status: "exported",
+        path: Some(path.to_string_lossy().into_owned()),
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(DocumentSession::new()))
+        .manage(Mutex::new(DocumentSession::new_studio()))
+        .manage(Mutex::new(
+            SaronPlayer::new().expect("audio control thread should start"),
+        ))
         .manage(ManagedCloseState(Mutex::new(CloseState::default())))
         .invoke_handler(tauri::generate_handler![
             get_state,
+            get_studio_layout,
+            export_score,
+            print_score,
+            export_audio,
+            find_saron_soundfont,
+            play_saron,
+            stop_saron,
+            pause_playback,
+            seek_playback,
+            saron_playback_active,
+            saron_playback_status,
             new_document,
             apply_command,
             get_layout,

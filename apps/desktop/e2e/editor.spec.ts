@@ -47,6 +47,7 @@ test("Q1 editor inserts, saves, reopens, and exports through the Tauri bridge", 
     let state = structuredClone(initialProjection);
     let saved = structuredClone(initialProjection);
     let callbackId = 0;
+    let playing = false;
 
     const copy = () => structuredClone(state);
     const internals = {
@@ -57,6 +58,17 @@ test("Q1 editor inserts, saves, reopens, and exports through the Tauri bridge", 
         if (command === "plugin:event|listen") return args.handler;
         if (command === "plugin:event|unlisten") return null;
         if (command === "get_state") return copy();
+        if (command === "find_saron_soundfont") return "/external/Gamelan_Saron_Pelog_F3.sf2";
+        if (command === "play_saron") {
+          if (args.soundfontPath !== "/external/Gamelan_Saron_Pelog_F3.sf2" || args.expectedRevision !== state.revision) {
+            throw new Error("Playback did not use the resolved sound and acknowledged score");
+          }
+          playing = true;
+          return null;
+        }
+        if (command === "saron_playback_active") return playing;
+        if (command === "saron_playback_status") return { playing, pulsePosition: playing ? 1 : null };
+        if (command === "stop_saron") { playing = false; return null; }
         if (command === "get_layout") {
           const cells = Array.from({ length: 16 }, (_, pulseIndex) => ({
             voiceId: "voice-1",
@@ -131,6 +143,18 @@ test("Q1 editor inserts, saves, reopens, and exports through the Tauri bridge", 
   await page.getByRole("button", { name: "Enter degree 3" }).click();
   await expect(page.getByRole("button", { name: "Pulse 1, occupied" })).toBeVisible();
   await expect(page.getByText("Unsaved changes")).toBeVisible();
+
+  const transport = page.getByRole("group", { name: "Playback transport" });
+  await expect(transport.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
+  await expect(transport.getByText("Saron ready")).toBeVisible();
+  await page.getByRole("button", { name: "Pulse 1, occupied" }).focus();
+  await page.keyboard.press("Space");
+  await expect(transport.getByRole("button", { name: "Stop playback" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Pulse 2, blank" })).toHaveClass(/is-playing/);
+  await page.keyboard.press("Space");
+  await expect(transport.getByRole("button", { name: "Stop playback" })).toBeDisabled();
+  await page.getByRole("textbox", { name: "Composer" }).press("Space");
+  await expect(transport.getByRole("button", { name: "Stop playback" })).toBeDisabled();
 
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("status").getByText("Composition saved.")).toBeVisible();

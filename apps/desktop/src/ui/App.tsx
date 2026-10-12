@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import ScoreStudio from "./ScoreStudio";
 import {
   BridgeError,
   type CloseRequest,
@@ -18,6 +20,12 @@ export default function App() {
   const [layout, setLayout] = useState<TaggedLayout | null>(null);
   const [selectedPulse, setSelectedPulse] = useState(0);
   const [register, setRegister] = useState(0);
+  const [soundfontPath, setSoundfontPath] = useState<string | null>(null);
+  const [soundfontLoading, setSoundfontLoading] = useState(true);
+  const [pulseBpm, setPulseBpm] = useState(120);
+  const [playbackActive, setPlaybackActive] = useState(false);
+  const [playbackPaused,setPlaybackPaused]=useState(false);
+  const [playbackPulse, setPlaybackPulse] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [metadataDraft, setMetadataDraft] = useState({ title: "", composer: "" });
   const [discardRequest, setDiscardRequest] = useState<DiscardRequest | null>(null);
@@ -31,6 +39,22 @@ export default function App() {
   const layoutRequest = useRef(0);
 
   useEffect(() => bridge.subscribe((next) => setProjection(next)), []);
+
+  useEffect(() => {
+    let active = true;
+    void bridge.findSaronSoundFont(localStorage.getItem("sandikala.saronSoundFont"))
+      .then((path) => {
+        if (!active) return;
+        setSoundfontPath(path);
+        if (path) localStorage.setItem("sandikala.saronSoundFont", path);
+        else localStorage.removeItem("sandikala.saronSoundFont");
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorText(cause));
+      })
+      .finally(() => { if (active) setSoundfontLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +96,12 @@ export default function App() {
   const viewId = view?.id ?? "";
   const sessionId = projection?.sessionId;
   const revision = projection?.revision;
+  const studio = view?.providerId === "sandikala.score.v1";
+  useEffect(() => {
+    if (studio && document?.extensions["sandikala.studio.v1"]) {
+      setPulseBpm((document.extensions["sandikala.studio.v1"] as {tempo:number}).tempo);
+    }
+  }, [studio,revision,sessionId]);
 
   const setSelection = useCallback((pulse: number, focus = false) => {
     const next = Math.max(0, Math.min(Math.max(pulseCount - 1, 0), pulse));
@@ -92,6 +122,28 @@ export default function App() {
   useEffect(() => {
     setSelection(Math.min(selectedRef.current, Math.max(pulseCount - 1, 0)));
   }, [pulseCount, setSelection]);
+
+  useEffect(() => {
+    if (!playbackActive) {
+      setPlaybackPulse(null);
+      setPlaybackPaused(false);
+      return;
+    }
+    let active = true;
+    const timer = window.setInterval(() => {
+      void bridge.saronPlaybackStatus().then((status) => {
+        if (!active) return;
+        if (!status.playing) setPlaybackActive(false);
+        setPlaybackPulse(status.pulsePosition);
+        setPlaybackPaused(status.paused??false);
+      }).catch((cause: unknown) => {
+        if (!active) return;
+        setPlaybackActive(false);
+        setError(errorText(cause));
+      });
+    }, 100);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [playbackActive]);
 
   useEffect(() => {
     const requestId = ++layoutRequest.current;
@@ -125,6 +177,7 @@ export default function App() {
   const commitMetadata = useCallback(async () => {
     const current = bridge.projection;
     if (!current || !current.capabilities.canEdit || unsupportedLayout) return;
+    if (current.document.notationViews[0]?.providerId === "sandikala.score.v1") return;
     const { title, composer } = metadataDraft;
     const key = JSON.stringify([title, composer]);
     if (queuedMetadata.current === key) return;
@@ -176,6 +229,8 @@ export default function App() {
   }, [commitMetadata]);
 
   const performReplacement = useCallback(async (request: DiscardRequest, discardUnsaved: boolean) => withBusy(async () => {
+    await bridge.stopSaron();
+    setPlaybackActive(false);
     const next = request === "new"
       ? await bridge.newDocument(discardUnsaved)
       : await bridge.openDocument(discardUnsaved);
@@ -191,6 +246,49 @@ export default function App() {
     setNotice(result.status === "cancelled" ? "SVG export cancelled." : "SVG exported.");
   }), [viewId, withBusy]);
 
+  const playSaron = useCallback(() => withBusy(async () => {
+    if (!soundfontPath) throw new Error("Choose a Saron Pelog .sf2 SoundFont first.");
+    if (!projection) throw new Error("The score is not ready yet.");
+    await bridge.playSaron(soundfontPath, pulseBpm);
+    lastPlayedDocument.current=`${bridge.projection?.sessionId}:${bridge.projection?.revision}`;
+    setPlaybackPaused(false);
+    setPlaybackPulse(0);
+    setPlaybackActive(true);
+    setNotice("Saron playback started. It uses the score snapshot at Play; stop and replay after editing.");
+  }), [projection, pulseBpm, soundfontPath, withBusy]);
+
+  const stopSaron = useCallback(() => withBusy(async () => {
+    await bridge.stopSaron();
+    setPlaybackActive(false);
+    setNotice("Playback stopped.");
+  }), [withBusy]);
+  const lastPlayedDocument=useRef("");
+  useEffect(()=>{
+    const key=`${sessionId}:${revision}`;
+    if(lastPlayedDocument.current!==key&&playbackActive)void stopSaron();
+    lastPlayedDocument.current=key;
+  },[sessionId,revision,playbackActive,stopSaron]);
+  const pausePlayback=useCallback(()=>withBusy(async()=>{
+    await bridge.pausePlayback(!playbackPaused);setPlaybackPaused(!playbackPaused);
+  }),[playbackPaused,withBusy]);
+
+  const chooseSaronSoundFont = useCallback(async () => {
+    try {
+      const selected = await openDialog({
+        title: "Choose a Pelog Saron SoundFont",
+        multiple: false,
+        filters: [{ name: "SoundFont 2", extensions: ["sf2"] }],
+      });
+      if (typeof selected === "string") {
+        setSoundfontPath(selected);
+        localStorage.setItem("sandikala.saronSoundFont", selected);
+        setNotice("SoundFont selected. It will be checked when playback starts.");
+      }
+    } catch (cause) {
+      setError(errorText(cause));
+    }
+  }, []);
+
   const resolveClose = useCallback((action: "save" | "discard" | "cancel") => withBusy(async () => {
     if (!closeRequest) return;
     if (action === "save") {
@@ -201,6 +299,10 @@ export default function App() {
         setNotice("Save cancelled. The composition is still open.");
         return;
       }
+    }
+    if (action !== "cancel") {
+      await bridge.stopSaron();
+      setPlaybackActive(false);
     }
     const result = await bridge.resolveCloseRequest(closeRequest, action);
     if (action === "cancel") {
@@ -262,8 +364,21 @@ export default function App() {
       }
     };
     window.addEventListener("keydown", handleKeys);
-    return () => window.removeEventListener("keydown", handleKeys);
-  }, [save]);
+    const handlePlayback = (event: globalThis.KeyboardEvent) => {
+      const target = event.target;
+      if (event.code !== "Space" || event.repeat || event.metaKey || event.ctrlKey || event.altKey
+        || (target instanceof HTMLElement && (target.closest("input, textarea, select, [contenteditable=true]")
+          || (target.closest("button") && !target.closest(".score-cell"))))) return;
+      if (busy || !projection || !soundfontPath) return;
+      event.preventDefault();
+      void (playbackActive ? (studio ? pausePlayback() : stopSaron()) : playSaron());
+    };
+    window.addEventListener("keydown", handlePlayback);
+    return () => {
+      window.removeEventListener("keydown", handleKeys);
+      window.removeEventListener("keydown", handlePlayback);
+    };
+  }, [save, busy, projection, soundfontPath, playbackActive, playSaron, stopSaron,studio,pausePlayback]);
 
   const addCycle = () => {
     if (canEdit && domain?.kind === "cycle") enqueue({ kind: "addCycle", domainId: domain.id });
@@ -276,6 +391,8 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      {studio && projection?.capabilities.canRender ? <ScoreStudio bridge={bridge} projection={projection} busy={busy} error={error} notice={notice} soundReady={!!soundfontPath} playing={playbackActive} paused={playbackPaused} onPause={()=>void pausePlayback()} playbackPulse={playbackPulse}
+        onNew={()=>void requestReplacement("new")} onOpen={()=>void requestReplacement("open")} onSave={saveAs=>save(saveAs)} onPlay={()=>void playSaron()} onStop={()=>void stopSaron()} onExportAudio={()=>bridge.exportAudio(soundfontPath!,pulseBpm)}/>:<>
       <header className="topbar">
         <div className="brand-lockup">
           <h1>Sandikala</h1>
@@ -304,6 +421,11 @@ export default function App() {
           <button type="button" onClick={() => enqueue({ kind: "redo" })} disabled={!canEdit || !projection?.canRedo} aria-label="Redo" title="Redo">↷</button>
         </div>
         <span className="toolbar-spacer" />
+        <div className="command-group" role="group" aria-label="Playback transport">
+          <button type="button" onClick={() => void playSaron()} disabled={busy || playbackActive || !projection || !soundfontPath || pulseBpm < 30 || pulseBpm > 300} aria-label="Play" title="Play (Space)">▶</button>
+          <button type="button" onClick={() => void stopSaron()} disabled={busy || !playbackActive} aria-label="Stop playback" title="Stop (Space)">■</button>
+          <span aria-live="polite">{playbackActive ? "Playing" : soundfontPath ? "Saron ready" : soundfontLoading ? "Loading sound…" : "Saron sound missing"}</span>
+        </div>
         {projection && <span className="revision-label">Revision {projection.revision}</span>}
       </section>
 
@@ -345,6 +467,26 @@ export default function App() {
               <button type="button" className={register === 0 ? "is-active" : ""} onClick={() => setRegister(0)} aria-pressed={register === 0} disabled={busy || !projection?.capabilities.canEdit}>Base</button>
               <button type="button" className={register === 1 ? "is-active" : ""} onClick={() => setRegister(1)} aria-pressed={register === 1} disabled={busy || !projection?.capabilities.canEdit}>Upper</button>
             </div>
+          </div>
+
+          <div className="control-section playback-section">
+            <div className="section-heading">
+              <h3>Playback</h3>
+              <span className="control-value">{soundfontLoading ? "Loading sound…" : playbackActive ? "Playing" : soundfontPath ? "Ready" : "Sound missing"}</span>
+            </div>
+            <button type="button" onClick={() => void chooseSaronSoundFont()} disabled={busy}>
+              {soundfontPath ? "Change Saron sound" : "Locate Saron sound"}
+            </button>
+            {soundfontPath && <p className="soundfont-name" title={soundfontPath}>{soundfontPath.split(/[\/]/).pop()}</p>}
+            <label className="field-label" htmlFor="pulse-tempo">Pulse tempo</label>
+            <div className="tempo-input">
+              <input id="pulse-tempo" type="number" min={30} max={300} step={1} value={pulseBpm} onChange={(event) => setPulseBpm(Number(event.target.value))} disabled={busy} />
+              <span>pulses/min</span>
+            </div>
+            {playbackActive
+              ? <button type="button" className="playback-stop" onClick={() => void stopSaron()} disabled={busy}>Stop</button>
+              : <button type="button" className="playback-start" onClick={() => void playSaron()} disabled={busy || !projection || !soundfontPath || pulseBpm < 30 || pulseBpm > 300} title="Play Saron (Space)">{busy ? "Preparing audio…" : "▶ Play"}</button>}
+            <p className="playback-note">Pelog degree/register mapping only. Other score parts are not played by this prototype.</p>
           </div>
 
           <div className="control-section">
@@ -415,7 +557,7 @@ export default function App() {
                           if (node) cellButtons.current.set(cell.pulseIndex, node);
                           else cellButtons.current.delete(cell.pulseIndex);
                         }}
-                        className={cell.pulseIndex === selectedPulse ? "score-cell is-selected" : "score-cell"}
+                        className={`score-cell${cell.pulseIndex === selectedPulse ? " is-selected" : ""}${cell.pulseIndex === Math.floor(playbackPulse ?? -1) ? " is-playing" : ""}`}
                         style={{ left: cell.x, top: cell.y, width: cell.width, height: cell.height }}
                         aria-label={`Pulse ${cell.pulseIndex + 1}, ${cell.eventId ? "occupied" : "blank"}`}
                         aria-pressed={cell.pulseIndex === selectedPulse}
@@ -434,6 +576,7 @@ export default function App() {
         </section>
       </div>
 
+      </>}
       {discardRequest && (
         <div className="modal-scrim">
           <section className="discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-copy">
@@ -463,11 +606,11 @@ export default function App() {
         </div>
       )}
 
-      <footer className="statusbar">
+      {!studio && <footer className="statusbar">
         <span>{projection?.capabilities.canEdit ? "Saron · Numerical demo" : "Read-only document"}</span>
         <span>{projection ? `Revision ${projection.revision}` : ""}</span>
         <span className="queue-status" aria-live="polite">{bridge.pendingActions ? `${bridge.pendingActions} edit${bridge.pendingActions === 1 ? "" : "s"} pending` : ""}</span>
-      </footer>
+      </footer>}
     </main>
   );
 }

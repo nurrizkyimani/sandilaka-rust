@@ -6,7 +6,7 @@ export interface ScoreDocument {
   schemaVersion: string;
   id: string;
   metadata: { title: string; composer: string };
-  parts: Array<{ id: string; name: string; voiceIds: string[] }>;
+  parts: Array<{ id: string; name: string; voiceIds: string[]; instrumentRef?: {id:string;version:string} }>;
   voices: Array<{ id: string; partId: string; timeDomainId: string }>;
   timeDomains: Array<
     | { kind: "cycle"; id: string; unit: string; cycleLength: number; cycleCount: number }
@@ -34,6 +34,13 @@ export type CellValue =
   | { kind: "rest" };
 
 export type SessionCommand =
+  | {kind:"setPartMix";partId:string;gain:number;pan:number;mute:boolean;solo:boolean}
+  | {kind:"annotateEvent";eventId:string;text:string;velocity:number}
+  | { kind: "studioEvent"; voiceId:string; position:Rational; extent:Rational; pitch: StudioPitch|null }
+  | { kind: "studioClear"; voiceId:string; position:Rational }
+  | { kind: "addInstrument"; instrumentId:string }
+  | { kind: "removePart"; partId:string }
+  | { kind: "configureScore"; settings:ScoreSettings }
   | { kind: "setCell"; voiceId: string; pulseIndex: number; value: CellValue }
   | { kind: "clearCell"; voiceId: string; pulseIndex: number }
   | { kind: "addCycle"; domainId: string }
@@ -52,8 +59,16 @@ export interface CellGeometry {
 }
 
 export type LayoutResult =
+  | { kind:"pages"; layout:PageLayout }
   | { kind: "svg"; providerId: string; width: number; height: number; svg: string; cells: CellGeometry[] }
   | { kind: "unsupportedView"; viewId: string; reason: string };
+
+export interface Rational {numerator:number;denominator:number}
+export type StudioPitch = {kind:"degree";contextId:string;degree:string;register:number}
+  | {kind:"spelled";contextId:string;letter:string;alteration:number;octave:number};
+export interface ScoreSettings {numerator:number;denominator:number;measures:number;subdivision:number;tempo:number;letterPaper:boolean;landscape:boolean;systemBreaks:number[]}
+export interface StudioCell {voiceId:string;position:Rational;endPosition:Rational;eventId:string|null;x:number;y:number;width:number;height:number}
+export interface PageLayout {width:number;height:number;fontCss:string;pages:Array<{number:number;svg:string;cells:StudioCell[]}>}
 
 export interface TaggedLayout {
   sessionId: string;
@@ -180,6 +195,51 @@ export class DesktopBridge {
       viewId,
     });
   }
+
+  async playSaron(soundfontPath: string, pulseBpm: number): Promise<void> {
+    if (this.replacing) throw new BridgeError("A document operation is in progress.", "Busy");
+    await this.flush();
+    const current = this.requireProjection();
+    await this.call<void>("play_saron", {
+      sessionId: current.sessionId,
+      expectedRevision: current.revision,
+      soundfontPath,
+      pulseBpm,
+    });
+  }
+
+  findSaronSoundFont(preferredPath: string | null): Promise<string | null> {
+    return this.call<string | null>("find_saron_soundfont", { preferredPath });
+  }
+
+  async getStudioLayout(partId:string|null):Promise<TaggedLayout|null>{
+    await this.flush(); const current=this.requireProjection();
+    const result=await this.call<TaggedLayout>("get_studio_layout",{sessionId:current.sessionId,revision:current.revision,partId});
+    return this.isCurrent(current)?result:null;
+  }
+  async exportScore(partId:string|null,format:"svg"|"html"|"pdf"):Promise<ExportResult>{
+    await this.flush();const current=this.requireProjection();
+    return this.call("export_score",{sessionId:current.sessionId,revision:current.revision,partId,format});
+  }
+  async printScore():Promise<void>{await document.fonts.ready;await this.call("print_score");}
+  async exportAudio(soundfontPath:string,pulseBpm:number):Promise<ExportResult>{
+    await this.flush();const current=this.requireProjection();
+    return this.call("export_audio",{sessionId:current.sessionId,revision:current.revision,soundfontPath,pulseBpm});
+  }
+
+  async stopSaron(): Promise<void> {
+    await this.call<void>("stop_saron");
+  }
+
+  async isSaronPlaying(): Promise<boolean> {
+    return this.call<boolean>("saron_playback_active");
+  }
+
+  saronPlaybackStatus(): Promise<{ playing: boolean; paused:boolean; pulsePosition: number | null }> {
+    return this.call("saron_playback_status");
+  }
+  pausePlayback(paused:boolean):Promise<void>{return this.call("pause_playback",{paused});}
+  seekPlayback(pulse:number):Promise<void>{return this.call("seek_playback",{pulse});}
 
   resolveCloseRequest(request: CloseRequest, action: "save" | "discard" | "cancel"): Promise<CloseResolution> {
     const current = this.requireProjection();
